@@ -1,14 +1,35 @@
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
+import { useRouter } from 'expo-router';
 import * as MediaLibrary from 'expo-media-library';
-import { useRef, useState } from 'react';
-import { Button, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Button, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function Index() {
+    const router = useRouter();
     const [facing, setFacing] = useState<CameraType>('back');
     const [permission, requestPermission] = useCameraPermissions();
     const cameraRef = useRef<CameraView>(null);
     const [isCapturing, setIsCapturing] = useState(false);
     const [captureStatus, setCaptureStatus] = useState<string | null>(null);
+    const [latestPhotoUri, setLatestPhotoUri] = useState<string | null>(null);
+    const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    useEffect(() => {
+        return () => {
+            if (statusTimeoutRef.current) {
+                clearTimeout(statusTimeoutRef.current);
+            }
+        };
+    }, []);
+
+    const clearStatusAfterDelay = () => {
+        if (statusTimeoutRef.current) {
+            clearTimeout(statusTimeoutRef.current);
+        }
+        statusTimeoutRef.current = setTimeout(() => {
+            setCaptureStatus(null);
+        }, 3000);
+    };
 
     const toggleFacing = () => {
         setFacing((current) => (current === 'back' ? 'front' : 'back'));
@@ -27,8 +48,11 @@ export default function Index() {
 
             if (!photo?.uri) {
                 setCaptureStatus('Could not capture photo. Please try again.');
+                clearStatusAfterDelay();
                 return;
             }
+
+            setLatestPhotoUri(photo.uri);
 
             let mediaPermission = await MediaLibrary.getPermissionsAsync();
             if (!mediaPermission.granted) {
@@ -37,16 +61,27 @@ export default function Index() {
 
             if (!mediaPermission.granted) {
                 setCaptureStatus('Storage permission denied. Photo was not saved.');
+                clearStatusAfterDelay();
                 return;
             }
 
             await MediaLibrary.saveToLibraryAsync(photo.uri);
             setCaptureStatus('Photo saved to your library.');
+            clearStatusAfterDelay();
         } catch {
             setCaptureStatus('Failed to capture photo. Please try again.');
+            clearStatusAfterDelay();
         } finally {
             setIsCapturing(false);
         }
+    };
+
+    const handleOpenPreview = () => {
+        if (!latestPhotoUri) {
+            return;
+        }
+
+        router.push({ pathname: '/preview', params: { uri: latestPhotoUri } });
     };
 
     if (!permission) {
@@ -69,6 +104,21 @@ export default function Index() {
             <CameraView ref={cameraRef} style={styles.camera} facing={facing} />
 
             <View style={styles.controlsOverlay}>
+                <TouchableOpacity
+                    style={[styles.previewButton, !latestPhotoUri && styles.disabledControl]}
+                    activeOpacity={0.8}
+                    onPress={handleOpenPreview}
+                    disabled={!latestPhotoUri}
+                >
+                    {latestPhotoUri ? (
+                        <Image source={{ uri: latestPhotoUri }} style={styles.previewImage} />
+                    ) : (
+                        <View style={styles.previewPlaceholder}>
+                            <Text style={styles.previewText}>No</Text>
+                        </View>
+                    )}
+                </TouchableOpacity>
+
                 <TouchableOpacity
                     style={[styles.shutterButton, isCapturing && styles.disabledControl]}
                     activeOpacity={0.8}
@@ -140,6 +190,31 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    },
+    previewButton: {
+        position: 'absolute',
+        left: 24,
+        width: 54,
+        height: 54,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#fff',
+        overflow: 'hidden',
+        backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    },
+    previewImage: {
+        width: '100%',
+        height: '100%',
+    },
+    previewPlaceholder: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    previewText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '600',
     },
     flipText: {
         color: '#fff',
