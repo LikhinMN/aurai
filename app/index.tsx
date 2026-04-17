@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Button, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function Index() {
-    const [facing, setFacing] = useState<CameraType>('back');
+    const [facing] = useState<CameraType>('back');
     const [permission, requestPermission] = useCameraPermissions();
 
     if (!permission) {
@@ -21,21 +21,23 @@ export default function Index() {
         );
     }
 
-    function toggleCameraFacing() {
-        setFacing(current => (current === 'back' ? 'front' : 'back'));
-    }
-
     return (
         <View style={styles.container}>
             <CameraView style={styles.camera} facing={facing} />
-            <View style={styles.buttonContainer}>
-                <TouchableOpacity style={styles.button} onPress={toggleCameraFacing}>
-                    <Text style={styles.text}>Flip Camera</Text>
+
+            <View style={styles.controlsOverlay}>
+                <TouchableOpacity style={styles.shutterButton} activeOpacity={0.8}>
+                    <View style={styles.shutterInner} />
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.flipButton} activeOpacity={0.8}>
+                    <Text style={styles.flipText}>Flip</Text>
                 </TouchableOpacity>
             </View>
         </View>
     );
 }
+
 const styles = StyleSheet.create({
     container: {
         flex: 1,
@@ -48,21 +50,45 @@ const styles = StyleSheet.create({
     camera: {
         flex: 1,
     },
-    buttonContainer: {
+    controlsOverlay: {
         position: 'absolute',
-        bottom: 64,
-        flexDirection: 'row',
-        backgroundColor: 'transparent',
-        width: '100%',
-        paddingHorizontal: 64,
-    },
-    button: {
-        flex: 1,
+        left: 0,
+        right: 0,
+        bottom: 36,
         alignItems: 'center',
+        justifyContent: 'center',
     },
-    text: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        color: 'white',
+    shutterButton: {
+        width: 84,
+        height: 84,
+        borderRadius: 42,
+        borderWidth: 5,
+        borderColor: '#fff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    },
+    shutterInner: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        backgroundColor: '#fff',
+    },
+    flipButton: {
+        position: 'absolute',
+        right: 24,
+        width: 54,
+        height: 54,
+        borderRadius: 27,
+        borderWidth: 1,
+        borderColor: '#fff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    },
+    flipText: {
+        color: '#fff',
+        fontSize: 13,
+        fontWeight: '600',
     },
 });
