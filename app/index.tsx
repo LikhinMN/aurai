@@ -3,8 +3,12 @@ import { useState } from 'react';
 import { Button, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function Index() {
-    const [facing] = useState<CameraType>('back');
+    const [facing, setFacing] = useState<CameraType>('back');
     const [permission, requestPermission] = useCameraPermissions();
+
+    const toggleFacing = () => {
+        setFacing((current) => (current === 'back' ? 'front' : 'back'));
+    };
 
     if (!permission) {
         // Camera permissions are still loading.
@@ -30,7 +34,7 @@ export default function Index() {
                     <View style={styles.shutterInner} />
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.flipButton} activeOpacity={0.8}>
+                <TouchableOpacity style={styles.flipButton} activeOpacity={0.8} onPress={toggleFacing}>
                     <Text style={styles.flipText}>Flip</Text>
                 </TouchableOpacity>
             </View>
