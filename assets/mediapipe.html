@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8" />
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<script>
+    const { PoseLandmarker, FilesetResolver } = window;
+
+    let poseLandmarker = null;
+
+    async function loadModel() {
+        const vision = await FilesetResolver.forVisionTasks(
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
+        );
+        poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+            baseOptions: {
+                modelAssetPath:
+                    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+                delegate: "GPU",
+            },
+            runningMode: "IMAGE",
+            numPoses: 2,
+        });
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: "MODEL_READY" }));
+    }
+
+    // Listen for image from React Native
+    window.addEventListener("message", async (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "ANALYZE") {
+            const img = new Image();
+            img.onload = async () => {
+                const result = poseLandmarker.detect(img);
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: "RESULT",
+                    poses: result.landmarks,         // array of poses, each with 33 keypoints
+                    worldPoses: result.worldLandmarks,
+                }));
+            };
+            img.src = data.image; // base64 string
+        }
+    });
+
+    loadModel();
+</script>
+</body>
+</html>
