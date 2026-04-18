@@ -2,7 +2,14 @@ import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
 import * as MediaLibrary from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
-import { Button, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Button, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import MediaPipeView from '@/components/MediaPipeView';
+import { detectScene, sceneLabel, SceneType, PoseKeypoint } from '@/utils/sceneDetector';
+
+type PoseResult = {
+    poses: unknown[];
+    worldPoses: unknown[];
+};
 
 export default function Index() {
     const router = useRouter();
@@ -13,15 +20,34 @@ export default function Index() {
     const [captureStatus, setCaptureStatus] = useState<string | null>(null);
     const [latestPhotoUri, setLatestPhotoUri] = useState<string | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [analyzeStageLabel, setAnalyzeStageLabel] = useState<string | null>(null);
+    const [isModelReady, setIsModelReady] = useState(false);
+    // Stored for upcoming pose overlay work in Sprint 3.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [keypoints, setKeypoints] = useState<PoseKeypoint[][]>([]);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [scene, setScene] = useState<SceneType>('unknown');
+    const mediaPipeRef = useRef<{ postMessage: (data: string) => void } | null>(null);
     const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const analyzeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
         return () => {
             if (statusTimeoutRef.current) {
                 clearTimeout(statusTimeoutRef.current);
             }
+            if (analyzeTimeoutRef.current) {
+                clearTimeout(analyzeTimeoutRef.current);
+            }
         };
     }, []);
+
+    const clearAnalyzeTimeout = () => {
+        if (analyzeTimeoutRef.current) {
+            clearTimeout(analyzeTimeoutRef.current);
+            analyzeTimeoutRef.current = null;
+        }
+    };
 
     const clearStatusAfterDelay = () => {
         if (statusTimeoutRef.current) {
@@ -86,29 +112,79 @@ export default function Index() {
     };
 
     const handleAnalyzeFrame = async () => {
-        if (isCapturing || isAnalyzing || !cameraRef.current) {
+        if (isCapturing || isAnalyzing || !cameraRef.current || !mediaPipeRef.current) {
+            return;
+        }
+
+        if (!isModelReady) {
+            setCaptureStatus('Model is still loading. Try again in a moment.');
+            clearStatusAfterDelay();
             return;
         }
 
         setIsAnalyzing(true);
+        setAnalyzeStageLabel('Capturing frame...');
         setCaptureStatus('Capturing frame for analysis...');
+        clearAnalyzeTimeout();
 
         try {
             const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.5 });
-            if (photo?.base64) {
-                console.log(`Frame captured! Base64 length: ${photo.base64.length}`);
-                setCaptureStatus(`Analyzed! Base64 len: ${photo.base64.length}`);
-            } else {
+
+            if (!photo?.base64) {
+                setIsAnalyzing(false);
+                setAnalyzeStageLabel(null);
                 setCaptureStatus('Failed to get base64 string.');
+                clearStatusAfterDelay();
+                return;
             }
-            clearStatusAfterDelay();
-        } catch (error) {
-            console.error('Analyze frame error:', error);
+
+            mediaPipeRef.current.postMessage(
+                JSON.stringify({
+                    type: 'ANALYZE',
+                    image: `data:image/jpeg;base64,${photo.base64}`,
+                })
+            );
+
+            setAnalyzeStageLabel('Running pose detection...');
+            setCaptureStatus('Analyzing frame...');
+            analyzeTimeoutRef.current = setTimeout(() => {
+                setIsAnalyzing(false);
+                setAnalyzeStageLabel(null);
+                setCaptureStatus('Analysis timed out. Please try again.');
+                clearStatusAfterDelay();
+            }, 12000);
+        } catch {
+            setIsAnalyzing(false);
+            setAnalyzeStageLabel(null);
             setCaptureStatus('Analysis failed.');
             clearStatusAfterDelay();
-        } finally {
-            setIsAnalyzing(false);
         }
+    };
+
+    const handleAnalyzeResult = ({ poses }: PoseResult) => {
+        clearAnalyzeTimeout();
+        setIsAnalyzing(false);
+        setAnalyzeStageLabel(null);
+
+        const typedPoses = poses as PoseKeypoint[][];
+        const poseCount = poses.length;
+        setKeypoints(typedPoses);
+
+        // Detect scene
+        const detectedScene = detectScene(typedPoses);
+        setScene(detectedScene);
+
+        setCaptureStatus(
+            poseCount > 0
+                ? `${sceneLabel(detectedScene)} — ${poseCount} pose${poseCount === 1 ? "" : "s"} found.`
+                : "Analysis complete: no poses found."
+        );
+        clearStatusAfterDelay();
+    };
+    const handleModelReady = () => {
+        setIsModelReady(true);
+        setCaptureStatus('Pose model loaded.');
+        clearStatusAfterDelay();
     };
 
     if (!permission) {
@@ -129,6 +205,13 @@ export default function Index() {
     return (
         <View style={styles.container}>
             <CameraView ref={cameraRef} style={styles.camera} facing={facing} />
+            <MediaPipeView
+                onModelReady={handleModelReady}
+                onResult={(poses, worldPoses) => handleAnalyzeResult({ poses, worldPoses })}
+                onRef={(ref) => {
+                    mediaPipeRef.current = ref;
+                }}
+            />
 
             <View style={styles.controlsOverlay}>
                 <TouchableOpacity
@@ -166,13 +249,27 @@ export default function Index() {
             </View>
 
             <TouchableOpacity
-                style={[styles.analyzeButton, (isCapturing || isAnalyzing) && styles.disabledControl]}
+                style={[styles.analyzeButton, (isCapturing || isAnalyzing || !isModelReady) && styles.disabledControl]}
                 activeOpacity={0.8}
                 onPress={handleAnalyzeFrame}
-                disabled={isCapturing || isAnalyzing}
+                disabled={isCapturing || isAnalyzing || !isModelReady}
             >
-                <Text style={styles.analyzeText}>{isAnalyzing ? '...' : 'Analyze'}</Text>
+                {isAnalyzing ? (
+                    <View style={styles.analyzeBusyRow}>
+                        <ActivityIndicator size="small" color="#fff" />
+                        <Text style={styles.analyzeText}>Working</Text>
+                    </View>
+                ) : (
+                    <Text style={styles.analyzeText}>{isModelReady ? 'Analyze' : 'Loading'}</Text>
+                )}
             </TouchableOpacity>
+
+            {isAnalyzing ? (
+                <View style={styles.progressOverlay}>
+                    <ActivityIndicator size="small" color="#fff" />
+                    <Text style={styles.progressText}>{analyzeStageLabel ?? 'Processing...'}</Text>
+                </View>
+            ) : null}
 
             {captureStatus ? <Text style={styles.captureStatus}>{captureStatus}</Text> : null}
         </View>
@@ -288,5 +385,29 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 14,
         fontWeight: '600',
+    },
+    analyzeBusyRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    progressOverlay: {
+        position: 'absolute',
+        top: 60,
+        left: 24,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: 20,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        borderWidth: 1,
+        borderColor: '#fff',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    progressText: {
+        color: '#fff',
+        fontSize: 13,
+        fontWeight: '500',
     },
 });
