@@ -6,17 +6,21 @@
 <body>
 <script>
     function sendToRN(data) {
-        window.ReactNativeWebView.postMessage(JSON.stringify(data));
+        try {
+            window.ReactNativeWebView.postMessage(JSON.stringify(data));
+        } catch (err) {
+            console.log("[Bridge ERROR] Failed to send to RN:", String(err));
+        }
+    }
+
+    function logStep(message) {
+        sendToRN({ type: "LOG", message: message });
     }
 
     let poseLandmarker = null;
 
     function resolveTasksVisionGlobals() {
-        const candidates = [
-            window.MediaPipeTasksVision,
-            window.vision,
-            window,
-        ].filter(Boolean);
+        const candidates = [window.MediaPipeTasksVision, window.vision, window].filter(Boolean);
 
         for (const candidate of candidates) {
             if (candidate.PoseLandmarker && candidate.FilesetResolver) {
@@ -33,11 +37,11 @@
     async function resolveTasksVisionExports() {
         const globals = resolveTasksVisionGlobals();
         if (globals) {
-            sendToRN({ type: "LOG", message: "Using MediaPipe globals" });
+            logStep("Using MediaPipe globals");
             return globals;
         }
 
-        sendToRN({ type: "LOG", message: "Globals missing, trying ESM import..." });
+        logStep("Globals missing, trying ESM import...");
 
         const moduleUrls = [
             "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/+esm",
@@ -50,7 +54,7 @@
             try {
                 const mod = await import(moduleUrl);
                 if (mod.PoseLandmarker && mod.FilesetResolver) {
-                    sendToRN({ type: "LOG", message: "Loaded MediaPipe via ESM import" });
+                    logStep("Loaded MediaPipe via ESM import");
                     return {
                         PoseLandmarker: mod.PoseLandmarker,
                         FilesetResolver: mod.FilesetResolver,
@@ -62,22 +66,24 @@
             }
         }
 
-        throw new Error(`Unable to resolve MediaPipe tasks exports. ${String(lastError)}`);
+        throw new Error("Unable to resolve MediaPipe tasks exports. " + String(lastError));
     }
 
     async function loadModel() {
         try {
-            sendToRN({ type: "LOG", message: "Starting model load..." });
+            logStep("Starting model load...");
 
-            const { PoseLandmarker, FilesetResolver } = await resolveTasksVisionExports();
+            const exports = await resolveTasksVisionExports();
+            const PoseLandmarker = exports.PoseLandmarker;
+            const FilesetResolver = exports.FilesetResolver;
 
-            sendToRN({ type: "LOG", message: "Resolved MediaPipe task exports" });
+            logStep("Resolved MediaPipe task exports");
 
             const vision = await FilesetResolver.forVisionTasks(
                 "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
             );
 
-            sendToRN({ type: "LOG", message: "FilesetResolver done" });
+            logStep("FilesetResolver done");
 
             poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
                 baseOptions: {
@@ -90,42 +96,78 @@
             });
 
             sendToRN({ type: "MODEL_READY" });
-            sendToRN({ type: "LOG", message: "Model ready!" });
-
+            logStep("Model ready!");
         } catch (err) {
-            sendToRN({ type: "ERROR", message: err.toString() });
+            sendToRN({ type: "ERROR", message: "Model load failed: " + String(err) });
         }
     }
 
-    window.addEventListener("message", async (event) => {
-        try {
-            const data = JSON.parse(event.data);
-
-            if (data.type === "ANALYZE") {
-                if (!poseLandmarker) {
-                    sendToRN({ type: "ERROR", message: "Model not ready yet" });
-                    return;
-                }
-                const img = new Image();
-                img.onload = () => {
-                    try {
-                        const result = poseLandmarker.detect(img);
-                        sendToRN({
-                            type: "RESULT",
-                            poses: result.landmarks,
-                            worldPoses: result.worldLandmarks,
-                        });
-                    } catch (err) {
-                        sendToRN({ type: "ERROR", message: "Detect failed: " + err.toString() });
-                    }
-                };
-                img.onerror = () => sendToRN({ type: "ERROR", message: "Image failed to load" });
-                img.src = data.image;
-            }
-        } catch (err) {
-            sendToRN({ type: "ERROR", message: "Message parse failed: " + err.toString() });
+    function parseIncomingData(rawData) {
+        if (typeof rawData === "string") {
+            return JSON.parse(rawData);
         }
-    });
+
+        if (rawData && typeof rawData === "object") {
+            return rawData;
+        }
+
+        throw new Error("Unsupported message payload type: " + typeof rawData);
+    }
+
+    async function handleIncomingMessage(event) {
+        try {
+            const data = parseIncomingData(event.data);
+            logStep("Message received: " + (data.type || "unknown"));
+
+            if (data.type !== "ANALYZE") {
+                return;
+            }
+
+            if (!poseLandmarker) {
+                sendToRN({ type: "ERROR", message: "Model not ready yet" });
+                return;
+            }
+
+            if (typeof data.image !== "string" || data.image.length === 0) {
+                sendToRN({ type: "ERROR", message: "ANALYZE payload missing image string" });
+                return;
+            }
+
+            logStep("Analyze image length: " + data.image.length);
+
+            const img = new Image();
+            img.onload = () => {
+                try {
+                    logStep("Image loaded " + img.width + "x" + img.height);
+
+                    const result = poseLandmarker.detect(img);
+                    const poseCount = result && result.landmarks ? result.landmarks.length : 0;
+                    logStep("Detection complete. Pose count: " + poseCount);
+
+                    sendToRN({
+                        type: "RESULT",
+                        poses: (result && result.landmarks) || [],
+                        worldPoses: (result && result.worldLandmarks) || [],
+                    });
+                } catch (err) {
+                    sendToRN({ type: "ERROR", message: "Detect failed: " + String(err) });
+                }
+            };
+
+            img.onerror = (err) => {
+                sendToRN({ type: "ERROR", message: "Image failed to load: " + String(err) });
+            };
+
+            img.src = data.image;
+        } catch (err) {
+            sendToRN({ type: "ERROR", message: "Message handling failed: " + String(err) });
+        }
+    }
+
+    // iOS + injected MessageEvent path
+    window.addEventListener("message", handleIncomingMessage);
+    // Android legacy path used by some WebView integrations
+    document.addEventListener("message", handleIncomingMessage);
 </script>
 
 <!-- Load AFTER the inline script so globals are ready when script tag fires onload -->
@@ -137,3 +179,4 @@
 ></script>
 </body>
 </html>
+

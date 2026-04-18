@@ -1,13 +1,17 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { View, StyleSheet } from "react-native";
 import { WebView } from "react-native-webview";
 import { Asset } from "expo-asset";
 import type { WebViewMessageEvent } from "react-native-webview/lib/WebViewTypes";
 
+export type MediaPipeBridgeRef = {
+    postMessage: (data: string) => void;
+};
+
 interface Props {
     onModelReady: () => void;
     onResult: (poses: unknown[], worldPoses: unknown[]) => void;
-    onRef: (ref: WebView | null) => void;
+    onRef: (ref: MediaPipeBridgeRef | null) => void;
 }
 
 export default function MediaPipeView({ onModelReady, onResult, onRef }: Props) {
@@ -19,50 +23,86 @@ export default function MediaPipeView({ onModelReady, onResult, onRef }: Props) 
         async function loadHtml() {
             const asset = Asset.fromModule(require("../assets/mediapipe.html"));
             await asset.downloadAsync();
-            setHtmlUri(asset.localUri);
+            setHtmlUri(asset.localUri ?? asset.uri);
         }
+
         loadHtml();
     }, []);
 
-    useEffect(() => {
-        if (webviewRef.current) {
-            onRef(webviewRef.current);
+    const postMessage = useCallback((data: string) => {
+        const webview = webviewRef.current;
+        if (!webview) {
+            console.log("[MediaPipeView] postMessage skipped: WebView is not ready");
+            return;
         }
-    }, [htmlUri, onRef]);
+
+        const escapedData = JSON.stringify(data);
+        const script = `
+            (function() {
+                var payload = ${escapedData};
+                var windowEvent = new MessageEvent("message", { data: payload });
+                var documentEvent = new MessageEvent("message", { data: payload });
+                window.dispatchEvent(windowEvent);
+                document.dispatchEvent(documentEvent);
+            })();
+            true;
+        `;
+
+        webview.injectJavaScript(script);
+    }, []);
+
+    useEffect(() => {
+        if (!htmlUri) {
+            return;
+        }
+
+        onRef({ postMessage });
+
+        return () => {
+            onRef(null);
+        };
+    }, [htmlUri, onRef, postMessage]);
 
     const handleMessage = (event: WebViewMessageEvent) => {
-        console.log("=== WebView message received ===");
-        console.log("Raw data:", event.nativeEvent.data);
+        const raw = event.nativeEvent.data;
+        console.log("[MediaPipeView] raw message:", raw);
 
         try {
-            const data = JSON.parse(event.nativeEvent.data) as {
+            const data = JSON.parse(raw) as {
                 type?: string;
                 poses?: unknown[];
                 worldPoses?: unknown[];
                 message?: string;
             };
 
-            console.log("Parsed type:", data.type);
+            const type = data.type ?? "UNKNOWN";
+            const message = data.message ?? "";
 
-            if (data.type === "MODEL_READY") {
-                console.log("[OK] Model is ready");
+            if (type === "LOG") {
+                console.log("[MediaPipeView][LOG]", message);
+                return;
+            }
+
+            if (type === "ERROR") {
+                console.log("[MediaPipeView][ERROR]", message || "Unknown WebView error");
+                return;
+            }
+
+            if (type === "MODEL_READY") {
+                console.log("[MediaPipeView][MODEL_READY]");
                 onModelReady();
+                return;
             }
 
-            if (data.type === "RESULT") {
-                console.log("[OK] Got result, poses:", data.poses?.length ?? 0);
+            if (type === "RESULT") {
+                console.log("[MediaPipeView][RESULT] poses:", data.poses?.length ?? 0);
                 onResult(data.poses ?? [], data.worldPoses ?? []);
+                return;
             }
 
-            if (data.type === "ERROR") {
-                console.log("[ERR] WebView error:", data.message ?? "Unknown error");
-            }
-
-            if (data.type === "LOG") {
-                console.log("[WEBVIEW LOG]", data.message ?? "");
-            }
+            console.log("[MediaPipeView][UNKNOWN]", data);
         } catch (error) {
-            console.log("[ERR] Failed to parse message:", error);
+            console.log("[MediaPipeView][PARSE_ERROR]", error);
         }
     };
 
@@ -74,9 +114,9 @@ export default function MediaPipeView({ onModelReady, onResult, onRef }: Props) 
                 ref={webviewRef}
                 source={{ uri: htmlUri }}
                 onMessage={handleMessage}
-                onLoad={() => console.log("[OK] WebView loaded")}
-                onError={(e) => console.log("[ERR] WebView error:", e.nativeEvent)}
-                onHttpError={(e) => console.log("[ERR] HTTP error:", e.nativeEvent)}
+                onLoad={() => console.log("[MediaPipeView] WebView loaded")}
+                onError={(e) => console.log("[MediaPipeView] WebView error:", e.nativeEvent)}
+                onHttpError={(e) => console.log("[MediaPipeView] HTTP error:", e.nativeEvent)}
                 javaScriptEnabled
                 originWhitelist={["*"]}
                 allowFileAccess
