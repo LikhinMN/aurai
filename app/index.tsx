@@ -12,6 +12,7 @@ export default function Index() {
     const [isCapturing, setIsCapturing] = useState(false);
     const [captureStatus, setCaptureStatus] = useState<string | null>(null);
     const [latestPhotoUri, setLatestPhotoUri] = useState<string | null>(null);
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
     const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
@@ -84,6 +85,32 @@ export default function Index() {
         router.push({ pathname: '/preview', params: { uri: latestPhotoUri } });
     };
 
+    const handleAnalyzeFrame = async () => {
+        if (isCapturing || isAnalyzing || !cameraRef.current) {
+            return;
+        }
+
+        setIsAnalyzing(true);
+        setCaptureStatus('Capturing frame for analysis...');
+
+        try {
+            const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.5 });
+            if (photo?.base64) {
+                console.log(`Frame captured! Base64 length: ${photo.base64.length}`);
+                setCaptureStatus(`Analyzed! Base64 len: ${photo.base64.length}`);
+            } else {
+                setCaptureStatus('Failed to get base64 string.');
+            }
+            clearStatusAfterDelay();
+        } catch (error) {
+            console.error('Analyze frame error:', error);
+            setCaptureStatus('Analysis failed.');
+            clearStatusAfterDelay();
+        } finally {
+            setIsAnalyzing(false);
+        }
+    };
+
     if (!permission) {
         // Camera permissions are still loading.
         return <View />;
@@ -108,7 +135,7 @@ export default function Index() {
                     style={[styles.previewButton, !latestPhotoUri && styles.disabledControl]}
                     activeOpacity={0.8}
                     onPress={handleOpenPreview}
-                    disabled={!latestPhotoUri}
+                    disabled={!latestPhotoUri || isAnalyzing}
                 >
                     {latestPhotoUri ? (
                         <Image source={{ uri: latestPhotoUri }} style={styles.previewImage} />
@@ -120,23 +147,32 @@ export default function Index() {
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                    style={[styles.shutterButton, isCapturing && styles.disabledControl]}
+                    style={[styles.shutterButton, (isCapturing || isAnalyzing) && styles.disabledControl]}
                     activeOpacity={0.8}
                     onPress={handleTakePhoto}
-                    disabled={isCapturing}
+                    disabled={isCapturing || isAnalyzing}
                 >
                     <View style={styles.shutterInner} />
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                    style={[styles.flipButton, isCapturing && styles.disabledControl]}
+                    style={[styles.flipButton, (isCapturing || isAnalyzing) && styles.disabledControl]}
                     activeOpacity={0.8}
                     onPress={toggleFacing}
-                    disabled={isCapturing}
+                    disabled={isCapturing || isAnalyzing}
                 >
                     <Text style={styles.flipText}>Flip</Text>
                 </TouchableOpacity>
             </View>
+
+            <TouchableOpacity
+                style={[styles.analyzeButton, (isCapturing || isAnalyzing) && styles.disabledControl]}
+                activeOpacity={0.8}
+                onPress={handleAnalyzeFrame}
+                disabled={isCapturing || isAnalyzing}
+            >
+                <Text style={styles.analyzeText}>{isAnalyzing ? '...' : 'Analyze'}</Text>
+            </TouchableOpacity>
 
             {captureStatus ? <Text style={styles.captureStatus}>{captureStatus}</Text> : null}
         </View>
@@ -236,5 +272,21 @@ const styles = StyleSheet.create({
         textShadowColor: 'rgba(0, 0, 0, 0.45)',
         textShadowOffset: { width: 0, height: 1 },
         textShadowRadius: 2,
+    },
+    analyzeButton: {
+        position: 'absolute',
+        top: 60,
+        right: 24,
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 20,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        borderWidth: 1,
+        borderColor: '#fff',
+    },
+    analyzeText: {
+        color: '#fff',
+        fontSize: 14,
+        fontWeight: '600',
     },
 });
