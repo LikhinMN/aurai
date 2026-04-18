@@ -4,6 +4,7 @@ import * as MediaLibrary from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Button, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import MediaPipeView from '@/components/MediaPipeView';
+import { detectScene, sceneLabel, SceneType, PoseKeypoint } from '@/utils/sceneDetector';
 
 type PoseResult = {
     poses: unknown[];
@@ -21,6 +22,11 @@ export default function Index() {
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [analyzeStageLabel, setAnalyzeStageLabel] = useState<string | null>(null);
     const [isModelReady, setIsModelReady] = useState(false);
+    // Stored for upcoming pose overlay work in Sprint 3.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [keypoints, setKeypoints] = useState<PoseKeypoint[][]>([]);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [scene, setScene] = useState<SceneType>('unknown');
     const mediaPipeRef = useRef<{ postMessage: (data: string) => void } | null>(null);
     const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const analyzeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -123,26 +129,30 @@ export default function Index() {
 
         try {
             const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.5 });
-            if (photo?.base64) {
-                const payload = JSON.stringify({
-                    type: 'ANALYZE',
-                    image: `data:image/jpeg;base64,${photo.base64}`,
-                });
-                mediaPipeRef.current.postMessage(payload);
-                setAnalyzeStageLabel('Running pose detection...');
-                setCaptureStatus('Analyzing frame...');
-                analyzeTimeoutRef.current = setTimeout(() => {
-                    setIsAnalyzing(false);
-                    setAnalyzeStageLabel(null);
-                    setCaptureStatus('Analysis timed out. Please try again.');
-                    clearStatusAfterDelay();
-                }, 12000);
-            } else {
+
+            if (!photo?.base64) {
                 setIsAnalyzing(false);
                 setAnalyzeStageLabel(null);
                 setCaptureStatus('Failed to get base64 string.');
                 clearStatusAfterDelay();
+                return;
             }
+
+            mediaPipeRef.current.postMessage(
+                JSON.stringify({
+                    type: 'ANALYZE',
+                    image: `data:image/jpeg;base64,${photo.base64}`,
+                })
+            );
+
+            setAnalyzeStageLabel('Running pose detection...');
+            setCaptureStatus('Analyzing frame...');
+            analyzeTimeoutRef.current = setTimeout(() => {
+                setIsAnalyzing(false);
+                setAnalyzeStageLabel(null);
+                setCaptureStatus('Analysis timed out. Please try again.');
+                clearStatusAfterDelay();
+            }, 12000);
         } catch {
             setIsAnalyzing(false);
             setAnalyzeStageLabel(null);
@@ -151,20 +161,29 @@ export default function Index() {
         }
     };
 
-    const handleModelReady = () => {
-        setIsModelReady(true);
-        setCaptureStatus('Pose model loaded.');
-        clearStatusAfterDelay();
-    };
-
     const handleAnalyzeResult = ({ poses }: PoseResult) => {
         clearAnalyzeTimeout();
         setIsAnalyzing(false);
         setAnalyzeStageLabel(null);
+
+        const typedPoses = poses as PoseKeypoint[][];
         const poseCount = poses.length;
+        setKeypoints(typedPoses);
+
+        // Detect scene
+        const detectedScene = detectScene(typedPoses);
+        setScene(detectedScene);
+
         setCaptureStatus(
-            poseCount > 0 ? `Analysis complete: ${poseCount} pose${poseCount === 1 ? '' : 's'} found.` : 'Analysis complete: no poses found.'
+            poseCount > 0
+                ? `${sceneLabel(detectedScene)} — ${poseCount} pose${poseCount === 1 ? "" : "s"} found.`
+                : "Analysis complete: no poses found."
         );
+        clearStatusAfterDelay();
+    };
+    const handleModelReady = () => {
+        setIsModelReady(true);
+        setCaptureStatus('Pose model loaded.');
         clearStatusAfterDelay();
     };
 
