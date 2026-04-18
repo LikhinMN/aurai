@@ -1,13 +1,13 @@
-import { useRef, useEffect,useState } from "react";
+import { useRef, useEffect, useState } from "react";
 import { View, StyleSheet } from "react-native";
 import { WebView } from "react-native-webview";
 import { Asset } from "expo-asset";
-import * as FileSystem from "expo-file-system";
+import type { WebViewMessageEvent } from "react-native-webview/lib/WebViewTypes";
 
 interface Props {
     onModelReady: () => void;
-    onResult: (poses: any[], worldPoses: any[]) => void;
-    onRef: (ref: any) => void;
+    onResult: (poses: unknown[], worldPoses: unknown[]) => void;
+    onRef: (ref: WebView | null) => void;
 }
 
 export default function MediaPipeView({ onModelReady, onResult, onRef }: Props) {
@@ -28,17 +28,22 @@ export default function MediaPipeView({ onModelReady, onResult, onRef }: Props) 
         if (webviewRef.current) {
             onRef(webviewRef.current);
         }
-    }, [htmlUri]);
+    }, [htmlUri, onRef]);
 
-    const handleMessage = (event: any) => {
-        const data = JSON.parse(event.nativeEvent.data);
+    const handleMessage = (event: WebViewMessageEvent) => {
+        let data: { type?: string; poses?: unknown[]; worldPoses?: unknown[] };
+        try {
+            data = JSON.parse(event.nativeEvent.data);
+        } catch {
+            return;
+        }
 
         if (data.type === "MODEL_READY") {
             onModelReady();
         }
 
         if (data.type === "RESULT") {
-            onResult(data.poses, data.worldPoses);
+            onResult(data.poses ?? [], data.worldPoses ?? []);
         }
     };
 
