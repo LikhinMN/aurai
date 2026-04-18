@@ -5,11 +5,51 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Button, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import MediaPipeView from '@/components/MediaPipeView';
 import { detectScene, sceneLabel, SceneType, PoseKeypoint } from '@/utils/sceneDetector';
+import SkeletonOverlay from "@/components/SkeletonOverlay";
 
 type PoseResult = {
     poses: unknown[];
     worldPoses: unknown[];
 };
+
+function normalizePoses(poses: unknown[]): PoseKeypoint[][] {
+    return poses
+        .map((pose) => {
+            if (!Array.isArray(pose)) {
+                return [];
+            }
+
+            return pose
+                .map((point) => {
+                    if (!point || typeof point !== 'object') {
+                        return null;
+                    }
+
+                    const maybePoint = point as Partial<PoseKeypoint>;
+                    const x = maybePoint.x;
+                    const y = maybePoint.y;
+
+                    if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) {
+                        return null;
+                    }
+
+                    const z = typeof maybePoint.z === 'number' && Number.isFinite(maybePoint.z) ? maybePoint.z : 0;
+                    const visibilityRaw =
+                        typeof maybePoint.visibility === 'number' && Number.isFinite(maybePoint.visibility)
+                            ? maybePoint.visibility
+                            : 1;
+
+                    return {
+                        x,
+                        y,
+                        z,
+                        visibility: Math.max(0, Math.min(1, visibilityRaw)),
+                    };
+                })
+                .filter((point): point is PoseKeypoint => point !== null);
+        })
+        .filter((pose): pose is PoseKeypoint[] => pose.length > 0);
+}
 
 export default function Index() {
     const router = useRouter();
@@ -23,7 +63,6 @@ export default function Index() {
     const [analyzeStageLabel, setAnalyzeStageLabel] = useState<string | null>(null);
     const [isModelReady, setIsModelReady] = useState(false);
     // Stored for upcoming pose overlay work in Sprint 3.
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [keypoints, setKeypoints] = useState<PoseKeypoint[][]>([]);
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [scene, setScene] = useState<SceneType>('unknown');
@@ -166,8 +205,8 @@ export default function Index() {
         setIsAnalyzing(false);
         setAnalyzeStageLabel(null);
 
-        const typedPoses = poses as PoseKeypoint[][];
-        const poseCount = poses.length;
+        const typedPoses = normalizePoses(poses);
+        const poseCount = typedPoses.length;
         setKeypoints(typedPoses);
 
         // Detect scene
@@ -205,6 +244,7 @@ export default function Index() {
     return (
         <View style={styles.container}>
             <CameraView ref={cameraRef} style={styles.camera} facing={facing} />
+            <SkeletonOverlay keypoints={keypoints} />
             <MediaPipeView
                 onModelReady={handleModelReady}
                 onResult={(poses, worldPoses) => handleAnalyzeResult({ poses, worldPoses })}

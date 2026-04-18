@@ -8,13 +8,13 @@
 ## Architecture and Data Flow
 - File-based routing is the app boundary: every screen is a file under `app/`; stack navigation is declared centrally in `app/_layout.tsx` via `<Stack />`.
 - `app/index.tsx` is the current entry screen; UI is rendered with React Native primitives and is the first place to validate route-level behavior.
-- No global state manager exists yet; route components own flow/state, with reusable helpers in `components/MediaPipeView.tsx` and `utils/sceneDetector.ts`.
+- No global state manager exists yet; route components own flow/state, with reusable helpers in `components/MediaPipeView.tsx`, `components/SkeletonOverlay.tsx`, `utils/sceneDetector.ts`, and `utils/skeletonConnections.ts`.
 
 ## Core Workflows
 - Install deps with `npm install`.
 - Main dev loop: `npm run start` (or `npm run android`, `npm run ios`, `npm run web`).
 - Linting: `npm run lint` (Expo ESLint flat config from `eslint.config.js`).
-- `npm run reset-project` is defined in `package.json`, but `scripts/reset-project.js` is absent in this repo state; do not rely on it without adding the script.
+- Available scripts in `package.json` are `start`, `android`, `ios`, `web`, and `lint`; `README.md` still mentions `npm run reset-project`, but that script is not present in this repo state.
 
 ## Conventions in This Repo
 - TypeScript is strict; prefer explicit types when inference is unclear (`tsconfig.json` -> `compilerOptions.strict: true`).
@@ -25,7 +25,7 @@
 
 ## Integration Points and Dependencies
 - Navigation stack comes from `expo-router`; do not add React Navigation containers manually unless intentionally diverging.
-- Camera capture + save flow is implemented in `app/index.tsx` with `expo-camera` and `expo-media-library` (permission check, `takePictureAsync`, and `saveToLibraryAsync`).
+- Camera capture + save flow is implemented in `app/index.tsx` with `expo-camera` and `expo-media-library` (permission check, `takePictureAsync`, and `saveToLibraryAsync`); the same screen also runs frame analysis (`handleAnalyzeFrame`/`handleAnalyzeResult`) and renders keypoints with `components/SkeletonOverlay.tsx`.
 - Pose analysis runs through a hidden WebView bridge: `components/MediaPipeView.tsx` loads `assets/mediapipe.html` (bundled via `app.json` `assetBundlePatterns`) and exchanges `MODEL_READY`/`RESULT` messages with `app/index.tsx`.
 - Splash screen behavior is plugin-configured in `app.json` (`expo-splash-screen` block); update branding assets through `assets/images/*`.
 - Deep-link scheme is `aurai` (`app.json` -> `scheme`); preserve this when adding auth/callback URLs.

@@ -7,6 +7,11 @@ export interface PoseKeypoint {
     visibility: number;
 }
 
+function visibilityOrDefault(keypoint?: PoseKeypoint): number {
+    if (!keypoint) return 0;
+    return Number.isFinite(keypoint.visibility) ? keypoint.visibility : 1;
+}
+
 export function detectScene(poses: PoseKeypoint[][]): SceneType {
     if (!poses || poses.length === 0) return "unknown";
 
@@ -24,10 +29,10 @@ export function detectScene(poses: PoseKeypoint[][]): SceneType {
     const rightAnkle  = keypoints[28];
 
     const fullBodyVisible =
-        leftWrist?.visibility  > 0.6 &&
-        rightWrist?.visibility > 0.6 &&
-        leftAnkle?.visibility  > 0.6 &&
-        rightAnkle?.visibility > 0.6;
+        visibilityOrDefault(leftWrist) > 0.6 &&
+        visibilityOrDefault(rightWrist) > 0.6 &&
+        visibilityOrDefault(leftAnkle) > 0.6 &&
+        visibilityOrDefault(rightAnkle) > 0.6;
 
     if (fullBodyVisible) return "outdoor";
 
@@ -37,9 +42,9 @@ export function detectScene(poses: PoseKeypoint[][]): SceneType {
     const rightShoulder = keypoints[12];
 
     const upperBodyVisible =
-        nose?.visibility         > 0.7 &&
-        leftShoulder?.visibility > 0.7 &&
-        rightShoulder?.visibility > 0.7;
+        visibilityOrDefault(nose) > 0.7 &&
+        visibilityOrDefault(leftShoulder) > 0.7 &&
+        visibilityOrDefault(rightShoulder) > 0.7;
 
     if (upperBodyVisible) return "indoor";
 
