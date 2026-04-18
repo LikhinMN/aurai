@@ -31,19 +31,38 @@ export default function MediaPipeView({ onModelReady, onResult, onRef }: Props) 
     }, [htmlUri, onRef]);
 
     const handleMessage = (event: WebViewMessageEvent) => {
-        let data: { type?: string; poses?: unknown[]; worldPoses?: unknown[] };
+        console.log("=== WebView message received ===");
+        console.log("Raw data:", event.nativeEvent.data);
+
         try {
-            data = JSON.parse(event.nativeEvent.data);
-        } catch {
-            return;
-        }
+            const data = JSON.parse(event.nativeEvent.data) as {
+                type?: string;
+                poses?: unknown[];
+                worldPoses?: unknown[];
+                message?: string;
+            };
 
-        if (data.type === "MODEL_READY") {
-            onModelReady();
-        }
+            console.log("Parsed type:", data.type);
 
-        if (data.type === "RESULT") {
-            onResult(data.poses ?? [], data.worldPoses ?? []);
+            if (data.type === "MODEL_READY") {
+                console.log("[OK] Model is ready");
+                onModelReady();
+            }
+
+            if (data.type === "RESULT") {
+                console.log("[OK] Got result, poses:", data.poses?.length ?? 0);
+                onResult(data.poses ?? [], data.worldPoses ?? []);
+            }
+
+            if (data.type === "ERROR") {
+                console.log("[ERR] WebView error:", data.message ?? "Unknown error");
+            }
+
+            if (data.type === "LOG") {
+                console.log("[WEBVIEW LOG]", data.message ?? "");
+            }
+        } catch (error) {
+            console.log("[ERR] Failed to parse message:", error);
         }
     };
 
@@ -55,6 +74,9 @@ export default function MediaPipeView({ onModelReady, onResult, onRef }: Props) 
                 ref={webviewRef}
                 source={{ uri: htmlUri }}
                 onMessage={handleMessage}
+                onLoad={() => console.log("[OK] WebView loaded")}
+                onError={(e) => console.log("[ERR] WebView error:", e.nativeEvent)}
+                onHttpError={(e) => console.log("[ERR] HTTP error:", e.nativeEvent)}
                 javaScriptEnabled
                 originWhitelist={["*"]}
                 allowFileAccess
