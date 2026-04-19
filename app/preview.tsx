@@ -1,17 +1,40 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, Image, StyleSheet, Text, TouchableOpacity, View, Dimensions } from 'react-native';
+
+const { width: WINDOW_WIDTH } = Dimensions.get('window');
 
 export default function PreviewScreen() {
     const router = useRouter();
-    const params = useLocalSearchParams<{ uri?: string | string[] }>();
-    const uri = Array.isArray(params.uri) ? params.uri[0] : params.uri;
+    const params = useLocalSearchParams<{ uris?: string }>();
+    
+    // Parse the stringified array
+    let uris: string[] = [];
+    try {
+        uris = params.uris ? JSON.parse(params.uris) : [];
+    } catch (e) {
+        console.error("[PreviewScreen] Failed to parse URIs:", e);
+    }
+    
+    console.log("[PreviewScreen] URIs received:", uris.length);
 
     return (
         <View style={styles.container}>
-            {uri ? (
-                <Image source={{ uri }} style={styles.image} resizeMode="contain" />
+            {uris.length > 0 ? (
+                <FlatList
+                    data={uris}
+                    keyExtractor={(item, index) => `${item}-${index}`}
+                    horizontal
+                    pagingEnabled
+                    showsHorizontalScrollIndicator={false}
+                    style={{ flex: 1 }}
+                    renderItem={({ item }) => (
+                        <View style={[styles.imageContainer, { backgroundColor: '#0a0a0a' }]}>
+                            <Image source={{ uri: item }} style={styles.image} resizeMode="contain" />
+                        </View>
+                    )}
+                />
             ) : (
-                <Text style={styles.message}>No image selected.</Text>
+                <Text style={styles.message}>No images selected.</Text>
             )}
 
             <TouchableOpacity style={styles.closeButton} onPress={() => router.back()} activeOpacity={0.85}>
@@ -25,6 +48,10 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#000',
+    },
+    imageContainer: {
+        width: WINDOW_WIDTH,
+        height: '100%',
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -35,6 +62,8 @@ const styles = StyleSheet.create({
     message: {
         color: '#fff',
         fontSize: 16,
+        textAlign: 'center',
+        marginTop: '50%',
     },
     closeButton: {
         position: 'absolute',
@@ -46,6 +75,7 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
         borderWidth: 1,
         borderColor: '#fff',
+        zIndex: 10,
     },
     closeText: {
         color: '#fff',
