@@ -1,7 +1,10 @@
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
 import * as MediaLibrary from 'expo-media-library';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import { Feather } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
+import { BlurView } from 'expo-blur';
 import { ActivityIndicator, Button, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import MediaPipeView from '@/components/MediaPipeView';
 import { detectScene, sceneLabel, SceneType, PoseKeypoint } from '@/utils/sceneDetector';
@@ -54,14 +57,22 @@ function normalizePoses(poses: unknown[]): PoseKeypoint[][] {
 export default function Index() {
     const router = useRouter();
     const [facing, setFacing] = useState<CameraType>('back');
+    const [flashMode, setFlashMode] = useState<'on' | 'off' | 'auto'>('off');
     const [permission, requestPermission] = useCameraPermissions();
+    const [zoom, setZoom] = useState(0);
+    const [activeZoom, setActiveZoom] = useState(1);
     const cameraRef = useRef<CameraView>(null);
     const [isCapturing, setIsCapturing] = useState(false);
     const [captureStatus, setCaptureStatus] = useState<string | null>(null);
-    const [latestPhotoUri, setLatestPhotoUri] = useState<string | null>(null);
+    const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [analyzeStageLabel, setAnalyzeStageLabel] = useState<string | null>(null);
     const [isModelReady, setIsModelReady] = useState(false);
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const [activeRatio, setActiveRatio] = useState('Full');
+    const [activeTimer, setActiveTimer] = useState('off');
+    const [countdown, setCountdown] = useState<number | null>(null);
+    const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     // Stored for upcoming pose overlay work in Sprint 3.
     const [keypoints, setKeypoints] = useState<PoseKeypoint[][]>([]);
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -77,6 +88,9 @@ export default function Index() {
             }
             if (analyzeTimeoutRef.current) {
                 clearTimeout(analyzeTimeoutRef.current);
+            }
+            if (countdownIntervalRef.current) {
+                clearInterval(countdownIntervalRef.current);
             }
         };
     }, []);
@@ -101,8 +115,8 @@ export default function Index() {
         setFacing((current) => (current === 'back' ? 'front' : 'back'));
     };
 
-    const handleTakePhoto = async () => {
-        if (isCapturing || !cameraRef.current) {
+    const capturePhoto = async () => {
+        if (!cameraRef.current) {
             return;
         }
 
@@ -118,7 +132,38 @@ export default function Index() {
                 return;
             }
 
-            setLatestPhotoUri(photo.uri);
+            let finalUri = photo.uri;
+
+            if (activeRatio !== 'Full') {
+                const [rWidth, rHeight] = activeRatio.split(':').map(Number);
+                const targetRatio = rWidth / rHeight;
+                
+                const { width, height } = photo;
+                let cropWidth = width;
+                let cropHeight = height;
+                let originX = 0;
+                let originY = 0;
+
+                // Adjust for orientation (photo might be portrait or landscape)
+                // expo-camera usually returns the photo with dimensions relative to sensor
+                // We want to match the visual ratio.
+                if (width / height > targetRatio) {
+                    cropWidth = height * targetRatio;
+                    originX = (width - cropWidth) / 2;
+                } else {
+                    cropHeight = width / targetRatio;
+                    originY = (height - cropHeight) / 2;
+                }
+
+                const result = await manipulateAsync(
+                    photo.uri,
+                    [{ crop: { originX, originY, width: cropWidth, height: cropHeight } }],
+                    { format: SaveFormat.JPEG, compress: 0.9 }
+                );
+                finalUri = result.uri;
+            }
+
+            setCapturedPhotos((prev) => [finalUri, ...prev]);
 
             let mediaPermission = await MediaLibrary.getPermissionsAsync();
             if (!mediaPermission.granted) {
@@ -131,7 +176,7 @@ export default function Index() {
                 return;
             }
 
-            await MediaLibrary.saveToLibraryAsync(photo.uri);
+            await MediaLibrary.saveToLibraryAsync(finalUri);
             setCaptureStatus('Photo saved to your library.');
             clearStatusAfterDelay();
         } catch {
@@ -142,12 +187,38 @@ export default function Index() {
         }
     };
 
-    const handleOpenPreview = () => {
-        if (!latestPhotoUri) {
+    const handleTakePhotoPress = () => {
+        if (isCapturing || !cameraRef.current || countdown !== null) {
             return;
         }
 
-        router.push({ pathname: '/preview', params: { uri: latestPhotoUri } });
+        if (activeTimer !== 'off') {
+            const seconds = parseInt(activeTimer, 10);
+            if (!isNaN(seconds)) {
+                let timeLeft = seconds;
+                setCountdown(timeLeft);
+                countdownIntervalRef.current = setInterval(() => {
+                    timeLeft -= 1;
+                    if (timeLeft > 0) {
+                        setCountdown(timeLeft);
+                    } else {
+                        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+                        setCountdown(null);
+                        capturePhoto();
+                    }
+                }, 1000);
+                return;
+            }
+        }
+        capturePhoto();
+    };
+
+    const handleOpenPreview = () => {
+        if (capturedPhotos.length === 0) {
+            return;
+        }
+
+        router.push({ pathname: '/preview', params: { uris: JSON.stringify(capturedPhotos) } });
     };
 
     const handleAnalyzeFrame = async () => {
@@ -242,9 +313,22 @@ export default function Index() {
     }
 
     return (
-        <View style={styles.container}>
-            <CameraView ref={cameraRef} style={styles.camera} facing={facing} />
-            <SkeletonOverlay keypoints={keypoints} />
+        <View style={[styles.container, { backgroundColor: '#000', alignItems: 'center' }]}>
+            <View style={[
+                styles.cameraContainer, 
+                activeRatio === '1:1' && { aspectRatio: 1 },
+                activeRatio === '3:4' && { aspectRatio: 3/4 },
+                activeRatio === '9:16' && { aspectRatio: 9/16 },
+                activeRatio === 'Full' && { flex: 1 }
+            ]}>
+                <CameraView ref={cameraRef} style={styles.camera} facing={facing} flash={flashMode} zoom={zoom} />
+                <SkeletonOverlay keypoints={keypoints} />
+                {countdown !== null && (
+                    <View style={styles.countdownOverlay}>
+                        <Text style={styles.countdownText}>{countdown}</Text>
+                    </View>
+                )}
+            </View>
             <MediaPipeView
                 onModelReady={handleModelReady}
                 onResult={(poses, worldPoses) => handleAnalyzeResult({ poses, worldPoses })}
@@ -253,56 +337,128 @@ export default function Index() {
                 }}
             />
 
-            <View style={styles.controlsOverlay}>
-                <TouchableOpacity
-                    style={[styles.previewButton, !latestPhotoUri && styles.disabledControl]}
-                    activeOpacity={0.8}
-                    onPress={handleOpenPreview}
-                    disabled={!latestPhotoUri || isAnalyzing}
-                >
-                    {latestPhotoUri ? (
-                        <Image source={{ uri: latestPhotoUri }} style={styles.previewImage} />
-                    ) : (
-                        <View style={styles.previewPlaceholder}>
-                            <Text style={styles.previewText}>No</Text>
+            <BlurView intensity={25} tint="dark" style={styles.bottomSection}>
+                <View style={styles.zoomContainer}>
+                    {[0.5, 1, 2, 5, 10].map((z) => (
+                        <TouchableOpacity 
+                            key={z} 
+                            style={[styles.zoomButton, activeZoom === z && styles.zoomButtonActive]}
+                            onPress={() => {
+                                setActiveZoom(z);
+                                // Map label to 0-1 range for expo-camera
+                                let zoomVal = 0;
+                                if (z === 1) zoomVal = 0.05;
+                                else if (z === 2) zoomVal = 0.15;
+                                else if (z === 5) zoomVal = 0.5;
+                                else if (z === 10) zoomVal = 1;
+                                setZoom(zoomVal);
+                            }}
+                        >
+                            <Text style={[styles.zoomText, activeZoom === z && styles.zoomTextActive]}>
+                                {z === 0.5 ? '.5' : z}{activeZoom === z ? 'x' : ''}
+                            </Text>
+                        </TouchableOpacity>
+                    ))}
+                </View>
+
+                <View style={styles.controlsRow}>
+                    <TouchableOpacity
+                        style={[styles.previewButton, capturedPhotos.length === 0 && styles.disabledControl]}
+                        activeOpacity={0.8}
+                        onPress={handleOpenPreview}
+                        disabled={capturedPhotos.length === 0 || isAnalyzing}
+                    >
+                        {capturedPhotos.length > 0 ? (
+                            <Image source={{ uri: capturedPhotos[0] }} style={styles.previewImage} />
+                        ) : (
+                            <View style={styles.previewPlaceholder}>
+                                <Text style={styles.previewText}>No</Text>
+                            </View>
+                        )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.shutterButton, (isCapturing || isAnalyzing) && styles.disabledControl]}
+                        activeOpacity={0.8}
+                        onPress={handleTakePhotoPress}
+                        disabled={isCapturing || isAnalyzing}
+                    >
+                        <View style={styles.shutterInner} />
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.flipButton, (isCapturing || isAnalyzing) && styles.disabledControl]}
+                        activeOpacity={0.8}
+                        onPress={toggleFacing}
+                        disabled={isCapturing || isAnalyzing}
+                    >
+                        <Feather name="refresh-ccw" color="#fff" size={22} />
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.modesRow}>
+                    <Text style={styles.modeText}>Portrait</Text>
+                    <Text style={[styles.modeText, styles.modeTextActive]}>Camera</Text>
+                    <Text style={styles.modeText}>Video</Text>
+                    <Text style={styles.modeText}>More</Text>
+                </View>
+            </BlurView>
+
+            <BlurView intensity={25} tint="dark" style={styles.topSection}>
+                <View style={styles.topSectionHeader}>
+                    <TouchableOpacity style={styles.topIconButton} activeOpacity={0.8} onPress={() => setFlashMode(flashMode === 'on' ? 'off' : 'on')}>
+                        <Feather name={flashMode === 'on' ? 'zap' : 'zap-off'} color="#fff" size={24} />
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.topIconButton, (isCapturing || isAnalyzing || !isModelReady) && styles.disabledControl]}
+                        activeOpacity={0.8}
+                        onPress={handleAnalyzeFrame}
+                        disabled={isCapturing || isAnalyzing || !isModelReady}
+                    >
+                        {isAnalyzing || !isModelReady ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                            <Feather name="activity" color="#fff" size={24} />
+                        )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity style={styles.topIconButton} activeOpacity={0.8} onPress={() => setIsMenuOpen(!isMenuOpen)}>
+                        <Feather name="menu" color="#fff" size={24} />
+                    </TouchableOpacity>
+                </View>
+
+                {isMenuOpen && (
+                    <View style={styles.dropdownMenu}>
+                        <View style={styles.menuRow}>
+                            {['1:1', '3:4', '9:16', 'Full'].map((r) => (
+                                <TouchableOpacity key={r} style={[styles.menuPill, activeRatio === r && styles.menuPillActiveGray]} onPress={() => setActiveRatio(r)}>
+                                    <Text style={[styles.menuPillText, activeRatio === r && styles.menuPillTextActiveGray]}>{r}</Text>
+                                </TouchableOpacity>
+                            ))}
                         </View>
-                    )}
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                    style={[styles.shutterButton, (isCapturing || isAnalyzing) && styles.disabledControl]}
-                    activeOpacity={0.8}
-                    onPress={handleTakePhoto}
-                    disabled={isCapturing || isAnalyzing}
-                >
-                    <View style={styles.shutterInner} />
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                    style={[styles.flipButton, (isCapturing || isAnalyzing) && styles.disabledControl]}
-                    activeOpacity={0.8}
-                    onPress={toggleFacing}
-                    disabled={isCapturing || isAnalyzing}
-                >
-                    <Text style={styles.flipText}>Flip</Text>
-                </TouchableOpacity>
-            </View>
-
-            <TouchableOpacity
-                style={[styles.analyzeButton, (isCapturing || isAnalyzing || !isModelReady) && styles.disabledControl]}
-                activeOpacity={0.8}
-                onPress={handleAnalyzeFrame}
-                disabled={isCapturing || isAnalyzing || !isModelReady}
-            >
-                {isAnalyzing ? (
-                    <View style={styles.analyzeBusyRow}>
-                        <ActivityIndicator size="small" color="#fff" />
-                        <Text style={styles.analyzeText}>Working</Text>
+                        <View style={styles.menuRow}>
+                            {['off', '3S', '5S', '10S'].map((t) => (
+                                <TouchableOpacity key={t} style={[styles.menuPill, activeTimer === t && styles.menuPillActiveGray]} onPress={() => setActiveTimer(t)}>
+                                    {t === 'off' ? (
+                                        <Feather name="clock" color={activeTimer === 'off' ? '#fff' : 'rgba(255,255,255,0.6)'} size={16} />
+                                    ) : (
+                                        <Text style={[styles.menuPillText, activeTimer === t && styles.menuPillTextActiveGray]}>{t}</Text>
+                                    )}
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                        <View style={styles.menuSettingsRow}>
+                            <TouchableOpacity style={styles.settingsItem}>
+                                <View style={styles.settingsIconWrapper}>
+                                    <Feather name="settings" color="#fff" size={20} />
+                                </View>
+                                <Text style={styles.settingsText}>Settings</Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
-                ) : (
-                    <Text style={styles.analyzeText}>{isModelReady ? 'Analyze' : 'Loading'}</Text>
                 )}
-            </TouchableOpacity>
+            </BlurView>
 
             {isAnalyzing ? (
                 <View style={styles.progressOverlay}>
@@ -325,55 +481,104 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         paddingBottom: 10,
     },
+    cameraContainer: {
+        width: '100%',
+        overflow: 'hidden',
+        justifyContent: 'center',
+    },
     camera: {
         flex: 1,
     },
-    controlsOverlay: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 36,
+    countdownOverlay: {
+        ...StyleSheet.absoluteFillObject,
         alignItems: 'center',
         justifyContent: 'center',
     },
+    countdownText: {
+        fontSize: 120,
+        fontWeight: 'bold',
+        color: '#fff',
+        textShadowColor: 'rgba(0,0,0,0.5)',
+        textShadowOffset: { width: 0, height: 2 },
+        textShadowRadius: 10,
+    },
+    bottomSection: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        paddingTop: 20,
+        paddingBottom: 40,
+        alignItems: 'center',
+        backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    },
+    zoomContainer: {
+        flexDirection: 'row',
+        backgroundColor: 'rgba(0, 0, 0, 0.4)',
+        borderRadius: 20,
+        padding: 4,
+        marginBottom: 20,
+        alignItems: 'center',
+    },
+    zoomButton: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    zoomButtonActive: {
+        backgroundColor: '#fff',
+    },
+    zoomText: {
+        color: '#fff',
+        fontSize: 14,
+        fontWeight: '500',
+    },
+    zoomTextActive: {
+        color: '#000',
+        fontWeight: '600',
+    },
+    controlsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        width: '100%',
+        paddingHorizontal: 40,
+        marginBottom: 24,
+    },
     shutterButton: {
-        width: 84,
-        height: 84,
-        borderRadius: 42,
-        borderWidth: 5,
+        width: 76,
+        height: 76,
+        borderRadius: 38,
+        borderWidth: 4,
         borderColor: '#fff',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'rgba(255, 255, 255, 0.08)',
+        backgroundColor: 'transparent',
     },
     shutterInner: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
+        width: 62,
+        height: 62,
+        borderRadius: 31,
         backgroundColor: '#fff',
     },
     flipButton: {
-        position: 'absolute',
-        right: 24,
-        width: 54,
-        height: 54,
-        borderRadius: 27,
-        borderWidth: 1,
-        borderColor: '#fff',
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+        backgroundColor: 'rgba(255, 255, 255, 0.15)',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'rgba(0, 0, 0, 0.35)',
     },
     previewButton: {
-        position: 'absolute',
-        left: 24,
-        width: 54,
-        height: 54,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: '#fff',
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+        backgroundColor: 'rgba(255, 255, 255, 0.15)',
         overflow: 'hidden',
-        backgroundColor: 'rgba(0, 0, 0, 0.35)',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     previewImage: {
         width: '100%',
@@ -389,10 +594,21 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '600',
     },
-    flipText: {
-        color: '#fff',
+    modesRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        width: '100%',
+        paddingHorizontal: 20,
+    },
+    modeText: {
+        color: 'rgba(255, 255, 255, 0.6)',
         fontSize: 13,
-        fontWeight: '600',
+        fontWeight: '500',
+    },
+    modeTextActive: {
+        color: '#fff',
+        fontWeight: '700',
     },
     disabledControl: {
         opacity: 0.55,
@@ -401,7 +617,7 @@ const styles = StyleSheet.create({
         position: 'absolute',
         left: 16,
         right: 16,
-        bottom: 136,
+        bottom: 260,
         textAlign: 'center',
         color: '#fff',
         fontSize: 13,
@@ -410,30 +626,87 @@ const styles = StyleSheet.create({
         textShadowOffset: { width: 0, height: 1 },
         textShadowRadius: 2,
     },
-    analyzeButton: {
+    topSection: {
         position: 'absolute',
-        top: 60,
-        right: 24,
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        borderRadius: 20,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        borderWidth: 1,
-        borderColor: '#fff',
+        top: 0,
+        left: 0,
+        right: 0,
+        paddingTop: 60,
+        paddingBottom: 20,
+        paddingHorizontal: 24,
+        backgroundColor: 'rgba(0, 0, 0, 0.2)',
+        borderBottomLeftRadius: 24,
+        borderBottomRightRadius: 24,
+        overflow: 'hidden',
     },
-    analyzeText: {
-        color: '#fff',
-        fontSize: 14,
-        fontWeight: '600',
-    },
-    analyzeBusyRow: {
+    topSectionHeader: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
+        justifyContent: 'space-between',
+        width: '100%',
+    },
+    topIconButton: {
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    dropdownMenu: {
+        marginTop: 20,
+        gap: 16,
+    },
+    menuRow: {
+        flexDirection: 'row',
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 24,
+        padding: 4,
+    },
+    menuPill: {
+        flex: 1,
+        paddingVertical: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 20,
+    },
+
+    menuPillActiveGray: {
+        backgroundColor: 'rgba(255,255,255,0.25)',
+    },
+    menuPillText: {
+        color: 'rgba(255,255,255,0.6)',
+        fontSize: 14,
+        fontWeight: '500',
+    },
+
+    menuPillTextActiveGray: {
+        color: '#fff',
+        fontWeight: '700',
+    },
+    menuSettingsRow: {
+        flexDirection: 'row',
+        marginTop: 8,
+        paddingHorizontal: 12,
+    },
+    settingsItem: {
+        alignItems: 'center',
+        gap: 6,
+    },
+    settingsIconWrapper: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    settingsText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '500',
     },
     progressOverlay: {
         position: 'absolute',
-        top: 60,
+        top: 120,
         left: 24,
         paddingHorizontal: 14,
         paddingVertical: 10,
