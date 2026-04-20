@@ -10,6 +10,7 @@ import MediaPipeView from '@/components/MediaPipeView';
 import { detectScene, sceneLabel, SceneType, PoseKeypoint } from '@/utils/sceneDetector';
 import SkeletonOverlay from "@/components/SkeletonOverlay";
 import { CameraAspectRatio, computePreviewRect, getCameraAspectRatioStyle } from '@/utils/cameraLayout';
+import { getRecommendedPose, RecommendedPose } from '@/utils/ollamaService';
 
 type PoseResult = {
     poses: unknown[];
@@ -68,6 +69,7 @@ export default function Index() {
     const [captureStatus, setCaptureStatus] = useState<string | null>(null);
     const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [isRecommending, setIsRecommending] = useState(false);
     const [analyzeStageLabel, setAnalyzeStageLabel] = useState<string | null>(null);
     const [isModelReady, setIsModelReady] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -75,9 +77,9 @@ export default function Index() {
     const [activeTimer, setActiveTimer] = useState('off');
     const [countdown, setCountdown] = useState<number | null>(null);
     const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    // Stored for upcoming pose overlay work in Sprint 3.
+    const [lastBase64, setLastBase64] = useState<string | null>(null);
+    const [, setRecommendedPose] = useState<RecommendedPose | null>(null);
     const [keypoints, setKeypoints] = useState<PoseKeypoint[][]>([]);
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [scene, setScene] = useState<SceneType>('unknown');
     const mediaPipeRef = useRef<{ postMessage: (data: string) => void } | null>(null);
     const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -263,6 +265,9 @@ export default function Index() {
                 return;
             }
 
+            const normalizedBase64 = photo.base64.replace(/^data:image\/[a-zA-Z+.-]+;base64,/, '');
+            setLastBase64(normalizedBase64);
+
             mediaPipeRef.current.postMessage(
                 JSON.stringify({
                     type: 'ANALYZE',
@@ -306,6 +311,43 @@ export default function Index() {
         );
         clearStatusAfterDelay();
     };
+
+    const handleRecommendPose = async () => {
+        if (isRecommending || isAnalyzing) {
+            return;
+        }
+
+        if (keypoints.length === 0) {
+            console.log('No detected keypoints available for recommendation yet.');
+            return;
+        }
+
+        if (!lastBase64) {
+            console.log('No analyzed frame available yet. Run Analyze first.');
+            return;
+        }
+
+        setIsRecommending(true);
+
+        try {
+            const recommendation = await getRecommendedPose({
+                keypoints,
+                scene,
+                imageBase64: lastBase64,
+            });
+
+            setRecommendedPose(recommendation);
+            console.log('✅ Recommended description:', recommendation.description);
+            recommendation.keypoints.forEach((point) => {
+                console.log(`✅ ${point.name}: x=${point.x.toFixed(2)}, y=${point.y.toFixed(2)}`);
+            });
+        } catch (error) {
+            console.error('Failed to get recommended pose from Ollama:', error);
+        } finally {
+            setIsRecommending(false);
+        }
+    };
+
     const handleModelReady = () => {
         setIsModelReady(true);
         setCaptureStatus('Pose model loaded.');
@@ -476,6 +518,25 @@ export default function Index() {
                     </View>
                 )}
             </BlurView>
+
+            <TouchableOpacity
+                style={[
+                    styles.generateButton,
+                    (keypoints.length === 0 || isRecommending || isAnalyzing) && styles.disabledControl,
+                ]}
+                activeOpacity={0.8}
+                onPress={handleRecommendPose}
+                disabled={keypoints.length === 0 || isRecommending || isAnalyzing}
+            >
+                {isRecommending ? (
+                    <View style={styles.generateButtonContent}>
+                        <ActivityIndicator size="small" color="#fff" />
+                        <Text style={styles.generateButtonText}>Thinking...</Text>
+                    </View>
+                ) : (
+                    <Text style={styles.generateButtonText}>Generate</Text>
+                )}
+            </TouchableOpacity>
 
             {isAnalyzing ? (
                 <View style={styles.progressOverlay}>
@@ -739,5 +800,26 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 13,
         fontWeight: '500',
+    },
+    generateButton: {
+        position: 'absolute',
+        top: 110,
+        right: 24,
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 20,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        borderWidth: 1,
+        borderColor: '#fff',
+    },
+    generateButtonContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    generateButtonText: {
+        color: '#fff',
+        fontSize: 14,
+        fontWeight: '600',
     },
 });
