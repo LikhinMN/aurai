@@ -9,6 +9,7 @@ import { ActivityIndicator, Button, Image, StyleSheet, Text, TouchableOpacity, V
 import MediaPipeView from '@/components/MediaPipeView';
 import { detectScene, sceneLabel, SceneType, PoseKeypoint } from '@/utils/sceneDetector';
 import SkeletonOverlay from "@/components/SkeletonOverlay";
+import RecommendedPoseOverlay from "@/components/RecommendedPoseOverlay";
 import { CameraAspectRatio, computePreviewRect, getCameraAspectRatioStyle } from '@/utils/cameraLayout';
 import { getRecommendedPose, RecommendedPose } from '@/utils/ollamaService';
 
@@ -78,7 +79,8 @@ export default function Index() {
     const [countdown, setCountdown] = useState<number | null>(null);
     const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const [lastBase64, setLastBase64] = useState<string | null>(null);
-    const [, setRecommendedPose] = useState<RecommendedPose | null>(null);
+    const [recommendedPose, setRecommendedPose] = useState<RecommendedPose | null>(null);
+    const [showOverlay, setShowOverlay] = useState(false);
     const [keypoints, setKeypoints] = useState<PoseKeypoint[][]>([]);
     const [scene, setScene] = useState<SceneType>('unknown');
     const mediaPipeRef = useRef<{ postMessage: (data: string) => void } | null>(null);
@@ -239,6 +241,8 @@ export default function Index() {
     };
 
     const handleAnalyzeFrame = async () => {
+        setShowOverlay(false);
+
         if (isCapturing || isAnalyzing || !cameraRef.current || !mediaPipeRef.current) {
             return;
         }
@@ -337,6 +341,7 @@ export default function Index() {
             });
 
             setRecommendedPose(recommendation);
+            setShowOverlay(true);
             console.log('✅ Recommended description:', recommendation.description);
             recommendation.keypoints.forEach((point) => {
                 console.log(`✅ ${point.name}: x=${point.x.toFixed(2)}, y=${point.y.toFixed(2)}`);
@@ -376,14 +381,18 @@ export default function Index() {
                 activeRatio === 'Full' && { flex: 1 },
                 cameraAspectRatio !== undefined && { aspectRatio: cameraAspectRatio }
             ]}>
-                <CameraView ref={cameraRef} style={styles.camera} facing={facing} flash={flashMode} zoom={zoom} />
+                <CameraView ref={cameraRef} style={styles.camera} facing={facing} mirror={false} flash={flashMode} zoom={zoom} />
                 {countdown !== null && (
                     <View style={styles.countdownOverlay}>
                         <Text style={styles.countdownText}>{countdown}</Text>
                     </View>
                 )}
             </View>
-            <SkeletonOverlay keypoints={keypoints} previewRect={previewRect} />
+            <RecommendedPoseOverlay
+                keypoints={recommendedPose?.keypoints ?? []}
+                previewRect={previewRect}
+                visible={showOverlay}
+            />
             <MediaPipeView
                 onModelReady={handleModelReady}
                 onResult={(poses, worldPoses) => handleAnalyzeResult({ poses, worldPoses })}
