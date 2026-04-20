@@ -3,12 +3,13 @@ import { useRouter } from 'expo-router';
 import * as MediaLibrary from 'expo-media-library';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { Feather } from '@expo/vector-icons';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BlurView } from 'expo-blur';
-import { ActivityIndicator, Button, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Button, Image, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import MediaPipeView from '@/components/MediaPipeView';
 import { detectScene, sceneLabel, SceneType, PoseKeypoint } from '@/utils/sceneDetector';
 import SkeletonOverlay from "@/components/SkeletonOverlay";
+import { CameraAspectRatio, computePreviewRect, getCameraAspectRatioStyle } from '@/utils/cameraLayout';
 
 type PoseResult = {
     poses: unknown[];
@@ -55,6 +56,7 @@ function normalizePoses(poses: unknown[]): PoseKeypoint[][] {
 }
 
 export default function Index() {
+    const { width: windowWidth, height: windowHeight } = useWindowDimensions();
     const router = useRouter();
     const [facing, setFacing] = useState<CameraType>('back');
     const [flashMode, setFlashMode] = useState<'on' | 'off' | 'auto'>('off');
@@ -69,7 +71,7 @@ export default function Index() {
     const [analyzeStageLabel, setAnalyzeStageLabel] = useState<string | null>(null);
     const [isModelReady, setIsModelReady] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
-    const [activeRatio, setActiveRatio] = useState('Full');
+    const [activeRatio, setActiveRatio] = useState<CameraAspectRatio>('Full');
     const [activeTimer, setActiveTimer] = useState('off');
     const [countdown, setCountdown] = useState<number | null>(null);
     const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -80,6 +82,19 @@ export default function Index() {
     const mediaPipeRef = useRef<{ postMessage: (data: string) => void } | null>(null);
     const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const analyzeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const previewRect = useMemo(
+        () =>
+            computePreviewRect({
+                windowWidth,
+                windowHeight,
+                aspectRatio: activeRatio,
+                zoom,
+            }),
+        [windowWidth, windowHeight, activeRatio, zoom]
+    );
+
+    const cameraAspectRatio = getCameraAspectRatioStyle(activeRatio);
 
     useEffect(() => {
         return () => {
@@ -316,19 +331,17 @@ export default function Index() {
         <View style={[styles.container, { backgroundColor: '#000', alignItems: 'center' }]}>
             <View style={[
                 styles.cameraContainer, 
-                activeRatio === '1:1' && { aspectRatio: 1 },
-                activeRatio === '3:4' && { aspectRatio: 3/4 },
-                activeRatio === '9:16' && { aspectRatio: 9/16 },
-                activeRatio === 'Full' && { flex: 1 }
+                activeRatio === 'Full' && { flex: 1 },
+                cameraAspectRatio !== undefined && { aspectRatio: cameraAspectRatio }
             ]}>
                 <CameraView ref={cameraRef} style={styles.camera} facing={facing} flash={flashMode} zoom={zoom} />
-                <SkeletonOverlay keypoints={keypoints} />
                 {countdown !== null && (
                     <View style={styles.countdownOverlay}>
                         <Text style={styles.countdownText}>{countdown}</Text>
                     </View>
                 )}
             </View>
+            <SkeletonOverlay keypoints={keypoints} previewRect={previewRect} />
             <MediaPipeView
                 onModelReady={handleModelReady}
                 onResult={(poses, worldPoses) => handleAnalyzeResult({ poses, worldPoses })}
@@ -432,7 +445,11 @@ export default function Index() {
                     <View style={styles.dropdownMenu}>
                         <View style={styles.menuRow}>
                             {['1:1', '3:4', '9:16', 'Full'].map((r) => (
-                                <TouchableOpacity key={r} style={[styles.menuPill, activeRatio === r && styles.menuPillActiveGray]} onPress={() => setActiveRatio(r)}>
+                                <TouchableOpacity
+                                    key={r}
+                                    style={[styles.menuPill, activeRatio === r && styles.menuPillActiveGray]}
+                                    onPress={() => setActiveRatio(r as CameraAspectRatio)}
+                                >
                                     <Text style={[styles.menuPillText, activeRatio === r && styles.menuPillTextActiveGray]}>{r}</Text>
                                 </TouchableOpacity>
                             ))}

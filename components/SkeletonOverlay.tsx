@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import { useWindowDimensions } from "react-native";
 import {
     Canvas,
     Circle,
@@ -20,14 +19,15 @@ import {
     LINE_WIDTH,
 } from "@/utils/skeletonConnections";
 import { PoseKeypoint } from "@/utils/sceneDetector";
+import { PreviewRect } from "@/utils/cameraLayout";
 
 interface Props {
     keypoints: PoseKeypoint[][];
+    previewRect: PreviewRect;
     minVisibility?: number;
 }
 
-export default function SkeletonOverlay({ keypoints, minVisibility = 0.4 }: Props) {
-    const { width, height } = useWindowDimensions();
+export default function SkeletonOverlay({ keypoints, previewRect, minVisibility = 0.4 }: Props) {
     const opacity = useSharedValue(0);
 
     // Fade in every time new keypoints arrive
@@ -46,8 +46,8 @@ export default function SkeletonOverlay({ keypoints, minVisibility = 0.4 }: Prop
     if (!keypoints || keypoints.length === 0) return null;
 
     const scale = (kp: PoseKeypoint) => ({
-        x: kp.x * width,
-        y: kp.y * height,
+        x: kp.x * previewRect.width,
+        y: kp.y * previewRect.height,
     });
 
     const isVisible = (kp: PoseKeypoint | undefined) => {
@@ -59,7 +59,16 @@ export default function SkeletonOverlay({ keypoints, minVisibility = 0.4 }: Prop
     };
 
     return (
-        <Canvas pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, width, height }}>
+        <Canvas
+            pointerEvents="none"
+            style={{
+                position: "absolute",
+                top: previewRect.y,
+                left: previewRect.x,
+                width: previewRect.width,
+                height: previewRect.height,
+            }}
+        >
             <Group opacity={opacity}>
                 {keypoints.map((pose, poseIndex) => (
                     <SkeletonPose
