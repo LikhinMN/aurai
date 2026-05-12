@@ -1,50 +1,76 @@
-# Welcome to your Expo app 👋
+# Aurai
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Aurai is a camera-first Expo app that detects human poses, classifies the scene, and can suggest improved poses for better photos. It combines real-time pose estimation (MediaPipe via a hidden WebView) with a skeleton overlay and optional AI-based pose recommendations.
 
-## Get started
+## Features
 
-1. Install dependencies
+- Live camera preview with capture, timer, and aspect ratio controls.
+- Pose detection and skeleton overlay using MediaPipe and Skia.
+- Scene classification (solo, group, indoor, outdoor).
+- Photo capture and gallery preview.
+- Optional pose recommendations backed by an Ollama model endpoint.
 
-   ```bash
-   npm install
-   ```
+## Getting started
 
-2. Start the app
+### Prerequisites
 
-   ```bash
-   npx expo start
-   ```
+- Node.js 18+ and npm
+- Expo Go or a development build for running on device
 
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+### Install dependencies
 
 ```bash
-npm run reset-project
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+### Run the app
 
-## Learn more
+```bash
+npm run start
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+Then choose a platform:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+- `npm run android`
+- `npm run ios`
+- `npm run web`
 
-## Join the community
+## App permissions
 
-Join our community of developers creating universal apps.
+The app requests camera access for pose detection and photo capture. It also requests media library access to save captured photos.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## Pose analysis flow
+
+- `components/MediaPipeView.tsx` loads `assets/mediapipe.html` in a hidden WebView.
+- The camera captures a frame and posts it to MediaPipe for pose detection.
+- `utils/sceneDetector.ts` classifies the detected pose into a scene type.
+- `components/SkeletonOverlay.tsx` renders the 33-point skeleton overlay.
+
+## Pose recommendations (Ollama)
+
+Pose recommendations are powered by an Ollama endpoint defined in `utils/ollamaService.ts`:
+
+- Update `OLLAMA_HOST` to point to your Ollama server.
+- Update `OLLAMA_MODEL` to the model you want to use.
+
+The recommendation uses the detected keypoints plus the captured frame to return a suggested pose and description.
+
+## Project structure
+
+- `app/` — route-based screens (`index.tsx`, `preview.tsx`)
+- `components/` — camera overlays and MediaPipe bridge
+- `utils/` — scene detection, camera layout helpers, Ollama integration
+- `assets/` — static assets and `mediapipe.html`
+
+## Scripts
+
+- `npm run start` — start Expo dev server
+- `npm run android` — launch on Android
+- `npm run ios` — launch on iOS
+- `npm run web` — launch on web
+- `npm run lint` — run Expo lint
+
+## Troubleshooting
+
+- If `expo` is not found, run `npm install` first or use `npx expo start`.
+- MediaPipe needs the bundled `assets/mediapipe.html`; ensure assets are included when publishing.
